@@ -3,15 +3,21 @@ package ru.quipy.apigateway
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import java.time.Duration
 import java.util.*
 
 @RestController
 class APIController {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
+
+    private val orderLimiter = SlidingWindowRateLimiter(40, Duration.ofSeconds(1))
 
     @Autowired
     private lateinit var orderRepository: OrderRepository
@@ -29,7 +35,12 @@ class APIController {
     data class User(val id: UUID, val name: String)
 
     @PostMapping("/orders")
-    fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
+    fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): ResponseEntity<Order> {
+        if (!orderLimiter.tick()) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "1")
+                .build()
+        }
         val order = Order(
             UUID.randomUUID(),
             userId,
@@ -37,7 +48,7 @@ class APIController {
             OrderStatus.COLLECTING,
             price,
         )
-        return orderRepository.save(order)
+        return ResponseEntity.ok(orderRepository.save(order))
     }
 
     data class Order(
