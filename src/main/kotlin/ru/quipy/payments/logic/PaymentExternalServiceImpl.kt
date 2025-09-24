@@ -12,6 +12,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 
 // Advice: always treat time as a Duration
@@ -45,7 +46,27 @@ class PaymentExternalSystemAdapterImpl(
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         val transactionId = UUID.randomUUID()
 
-        semaphore.acquire()
+        val now = System.currentTimeMillis()
+        val remainingTime = maxOf(0, deadline - now)
+
+        val acquired = try {
+            if (remainingTime > 0) {
+                semaphore.tryAcquire(remainingTime, TimeUnit.MILLISECONDS)
+            } else {
+                semaphore.tryAcquire()
+            }
+        } catch (e: InterruptedException) {
+            logger.warn("[$accountName] Interrupted while waiting for semaphore for payment $paymentId")
+            return
+        }
+
+        if (!acquired) {
+            logger.warn("[$accountName] Could not acquire semaphore within deadline for payment $paymentId")
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = "Semaphore acquisition timeout")
+            }
+            return
+        }
         try {
             val now = System.currentTimeMillis()
             val deadlineTimeout = maxOf(0, deadline - now)

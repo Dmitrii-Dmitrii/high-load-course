@@ -19,12 +19,13 @@ class Semaphore(private var permissions: Int) {
     }
 
     fun tryAcquire(): Boolean {
-        if (permissions > 0) {
-            permissions--
-            return true
+        lock.withLock {
+            if (permissions > 0) {
+                permissions--
+                return true
+            }
+            return false
         }
-
-        return false
     }
 
     fun tryAcquire(timeout: Long, unit: TimeUnit): Boolean {
