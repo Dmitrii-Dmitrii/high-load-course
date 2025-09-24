@@ -40,27 +40,30 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentLimiter =
         SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong(), window = Duration.ofSeconds(1))
 
+    private val semaphore = Semaphore(parallelRequests)
+
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        val now = System.currentTimeMillis()
-        val deadlineTimeout = maxOf(0, deadline - now)
-        if (!paymentLimiter.tickBlocking(Duration.ofSeconds(deadlineTimeout))) {
-            logger.warn("[$accountName] timeout before payment for $paymentId")
-            return
-        }
-
-        logger.info("[$accountName] Submitting payment request for payment $paymentId")
-
         val transactionId = UUID.randomUUID()
 
-        // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        paymentESService.update(paymentId) {
-            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-        }
-
-        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
-
+        semaphore.acquire()
         try {
+            val now = System.currentTimeMillis()
+            val deadlineTimeout = maxOf(0, deadline - now)
+            if (!paymentLimiter.tickBlocking(Duration.ofSeconds(deadlineTimeout))) {
+                logger.warn("[$accountName] timeout before payment for $paymentId")
+                return
+            }
+
+            logger.info("[$accountName] Submitting payment request for payment $paymentId")
+
+            // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
+            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
+            paymentESService.update(paymentId) {
+                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+            }
+
+            logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
+
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
@@ -99,6 +102,8 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        } finally {
+            semaphore.release()
         }
     }
 
