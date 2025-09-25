@@ -28,6 +28,7 @@ class Semaphore(private var permissions: Int) {
         }
     }
 
+    @Throws(InterruptedException::class)
     fun tryAcquire(timeout: Long, unit: TimeUnit): Boolean {
         var remain = unit.toNanos(timeout)
         lock.lock()

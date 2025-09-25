@@ -53,7 +53,7 @@ class PaymentExternalSystemAdapterImpl(
             if (remainingTime > 0) {
                 semaphore.tryAcquire(remainingTime, TimeUnit.MILLISECONDS)
             } else {
-                semaphore.tryAcquire()
+                false
             }
         } catch (e: InterruptedException) {
             logger.warn("[$accountName] Interrupted while waiting for semaphore for payment $paymentId")
