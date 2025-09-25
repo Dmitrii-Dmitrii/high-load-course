@@ -9,7 +9,7 @@ Content-Type: application/json
   "branch": "hw-02",
   "accounts": "acc-5",
   "ratePerSecond": 2,
-  "testCount": 500,
+  "testCount": 100,
   "processingTimeMillis": 60000,
   "onPremises": true
 }
