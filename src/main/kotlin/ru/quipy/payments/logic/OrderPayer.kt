@@ -57,18 +57,18 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
         val createdAt = System.currentTimeMillis()
 
         if (deadline <= createdAt) {
-            throw TooManyRequestsException(createdAt + 350)
+            throw TooManyRequestsException(createdAt + 300)
 //            throw TooManyRequestsException(1)
         }
 
         val deadlineTimeout = maxOf(0, deadline - createdAt)
         if (!paymentLimiter.tickBlocking(Duration.ofSeconds(deadlineTimeout))) {
-            throw TooManyRequestsException(createdAt + 550)
+            throw TooManyRequestsException(createdAt + 300)
 //            throw TooManyRequestsException(1)
         }
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw TooManyRequestsException(createdAt + 200)
+            throw TooManyRequestsException(createdAt + 300)
 //            throw TooManyRequestsException(1)
         }
 
