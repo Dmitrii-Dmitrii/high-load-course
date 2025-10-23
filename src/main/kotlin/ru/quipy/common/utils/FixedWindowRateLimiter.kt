@@ -13,6 +13,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 interface RateLimiter {
     fun tick(): Boolean
+    fun tickBlocking()
+    fun tickBlocking(duration: Duration): Boolean
 }
 
 class FixedWindowRateLimiter(
@@ -52,7 +54,11 @@ class FixedWindowRateLimiter(
 
     override fun tick() = semaphore.tryAcquire()
 
-    fun tickBlocking() = semaphore.acquire()
+    override fun tickBlocking() = semaphore.acquire()
+
+    override fun tickBlocking(duration: Duration): Boolean {
+        TODO("Not yet implemented")
+    }
 }
 
 class SlowStartRateLimiter(
@@ -101,7 +107,11 @@ class SlowStartRateLimiter(
 
     override fun tick() = semaphore.tryAcquire()
 
-    fun tickBlocking() = semaphore.acquire()
+    override fun tickBlocking() = semaphore.acquire()
+
+    override fun tickBlocking(duration: Duration): Boolean {
+        TODO("Not yet implemented")
+    }
 }
 
 class CountingRateLimiter(
@@ -135,6 +145,14 @@ class CountingRateLimiter(
         var segmentStart: Long = System.currentTimeMillis(),
         var permits: Int = 0,
     )
+
+    override fun tickBlocking() {
+        TODO("Not yet implemented")
+    }
+
+    override fun tickBlocking(duration: Duration): Boolean {
+        TODO("Not yet implemented")
+    }
 }
 
 fun makeRateLimiter(accountName: String, rate: Int, timeUnit: TimeUnit = TimeUnit.SECONDS): io.github.resilience4j.ratelimiter.RateLimiter {

@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
@@ -20,8 +21,6 @@ import java.util.*
 class APIController(meterRegistry: MeterRegistry) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
-
-    private val orderLimiter = SlidingWindowRateLimiter(40, Duration.ofSeconds(1))
 
     private val createOrderCounter =
         Counter.builder("http_request_create_order").description("Counts the number of createOrder requests").register(meterRegistry)
@@ -47,11 +46,6 @@ class APIController(meterRegistry: MeterRegistry) {
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): ResponseEntity<Order> {
         createOrderCounter.increment()
-        if (!orderLimiter.tick()) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", "1")
-                .build()
-        }
         val order = Order(
             UUID.randomUUID(),
             userId,
@@ -84,13 +78,13 @@ class APIController(meterRegistry: MeterRegistry) {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
-        var createdAt = now()
+        var createdAt: Long
         try {
             createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         } catch (e: TooManyRequestsException) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", "1")
-                .build()
+            val headers = HttpHeaders()
+            headers.add("Retry-After", e.retryAfter.toString())
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).headers(headers).build()
         }
         return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }

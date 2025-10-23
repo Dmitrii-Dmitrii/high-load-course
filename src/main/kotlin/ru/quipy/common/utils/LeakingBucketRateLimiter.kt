@@ -34,4 +34,22 @@ class LeakingBucketRateLimiter(
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(LeakingBucketRateLimiter::class.java)
     }
+
+    override fun tickBlocking() {
+        try {
+            queue.put(1)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw e
+        }
+    }
+
+    override fun tickBlocking(duration: Duration): Boolean {
+        return try {
+            queue.offer(1, duration.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+    }
 }

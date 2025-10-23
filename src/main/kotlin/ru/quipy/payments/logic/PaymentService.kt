@@ -49,4 +49,4 @@ class ExternalSysResponse(
     val message: String? = null,
 )
 
-class TooManyRequestsException() : RuntimeException()
+class TooManyRequestsException(val retryAfter: Long) : RuntimeException()

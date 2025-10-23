@@ -1,6 +1,5 @@
 package ru.quipy.payments.logic
 
-import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -8,8 +7,8 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.NamedThreadFactory
-import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.time.Duration
@@ -21,7 +20,10 @@ import java.util.concurrent.atomic.AtomicInteger
 
 
 @Service
-class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") private val rateLimitPerSec: Int,) {
+class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") private val rateLimitPerSec: Int) {
+//    private var queueCapacity: Int = 5
+//    private var queueCapacity: Int = 100
+    private var queueCapacity: Int = 300
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
@@ -38,12 +40,12 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(8_000),
+        LinkedBlockingQueue(queueCapacity),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val paymentLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+    private val paymentLimiter = LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1), rateLimitPerSec * 3)
 
     private val processPaymentsGauge = AtomicInteger()
 
@@ -55,16 +57,19 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
         val createdAt = System.currentTimeMillis()
 
         if (deadline <= createdAt) {
-            throw TooManyRequestsException()
+//            throw TooManyRequestsException(createdAt + 300)
+            throw TooManyRequestsException(1)
         }
 
         val deadlineTimeout = maxOf(0, deadline - createdAt)
-        if (!paymentLimiter.tick()) {
-            throw TooManyRequestsException()
+        if (!paymentLimiter.tickBlocking(Duration.ofSeconds(deadlineTimeout))) {
+//            throw TooManyRequestsException(createdAt + 500)
+            throw TooManyRequestsException(1)
         }
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw TooManyRequestsException()
+//            throw TooManyRequestsException(createdAt + 250)
+            throw TooManyRequestsException(1)
         }
 
         paymentExecutor.submit {
@@ -75,7 +80,7 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
                     amount
                 )
             }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+            logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }

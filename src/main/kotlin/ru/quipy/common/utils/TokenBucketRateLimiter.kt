@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -49,5 +50,34 @@ class TokenBucketRateLimiter(
                 return true
             }
         }
+    }
+
+    override fun tickBlocking() {
+        TODO("Not yet implemented")
+    }
+
+    override fun tickBlocking(duration: Duration): Boolean {
+        val startTime = System.currentTimeMillis()
+        val endTime = startTime + duration.toMillis()
+        
+        while (System.currentTimeMillis() < endTime) {
+            val tokensAvailable = bucket.get()
+            if (tokensAvailable > 0) {
+                val res = bucket.compareAndSet(tokensAvailable, tokensAvailable - 1)
+                if (res) {
+                    return true
+                }
+                continue
+            }
+            
+            Thread.sleep(1)
+        }
+
+        val tokensAvailable = bucket.get()
+        if (tokensAvailable > 0) {
+            return bucket.compareAndSet(tokensAvailable, tokensAvailable - 1)
+        }
+
+        return false
     }
 }
