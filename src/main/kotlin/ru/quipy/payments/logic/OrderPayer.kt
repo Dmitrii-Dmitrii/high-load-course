@@ -21,8 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Service
 class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") private val rateLimitPerSec: Int) {
-//    private var queueCapacity: Int = 5
-    private var queueCapacity: Int = 100
+    private var queueCapacity: Int = 5
+//    private var queueCapacity: Int = 100
 //    private var queueCapacity: Int = 300
 
     companion object {
