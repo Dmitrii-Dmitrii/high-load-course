@@ -30,13 +30,19 @@ class PaymentSystemImpl(
     private val failCounter =
         Counter.builder("http_request_fail_pay").description("Counts the number of fail pay").register(meterRegistry)
 
+    private val maxRetries = 25
+
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         for (account in paymentAccounts) {
-            val res = account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
-            if (res) {
-                successCounter.increment()
-            } else {
-                failCounter.increment()
+            for (i in 1..maxRetries) {
+                val res = account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+                if (res) {
+                    successCounter.increment()
+                    break
+                } else {
+                    failCounter.increment()
+                    Thread.sleep((10 * i).toLong())
+                }
             }
         }
     }
