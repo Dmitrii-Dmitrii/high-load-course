@@ -22,6 +22,8 @@ class APIController(meterRegistry: MeterRegistry) {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
+    private val orderLimiter = SlidingWindowRateLimiter(28, Duration.ofSeconds(1))
+
     private val createOrderCounter =
         Counter.builder("http_request_create_order").description("Counts the number of createOrder requests").register(meterRegistry)
 

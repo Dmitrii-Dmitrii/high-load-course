@@ -21,9 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Service
 class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") private val rateLimitPerSec: Int) {
-    private var queueCapacity: Int = 5
-//    private var queueCapacity: Int = 100
-//    private var queueCapacity: Int = 300
+    private var queueCapacity: Int = 7
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
@@ -45,7 +43,7 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val paymentLimiter = LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1), rateLimitPerSec * 3)
+    private val paymentLimiter = LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1), rateLimitPerSec)
 
     private val processPaymentsGauge = AtomicInteger()
 
@@ -57,19 +55,16 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
         val createdAt = System.currentTimeMillis()
 
         if (deadline <= createdAt) {
-            throw TooManyRequestsException(createdAt + 300)
-//            throw TooManyRequestsException(1)
+            throw TooManyRequestsException(createdAt + 100)
         }
 
         val deadlineTimeout = maxOf(0, deadline - createdAt)
         if (!paymentLimiter.tickBlocking(Duration.ofSeconds(deadlineTimeout))) {
-            throw TooManyRequestsException(createdAt + 300)
-//            throw TooManyRequestsException(1)
+            throw TooManyRequestsException(createdAt + 100)
         }
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw TooManyRequestsException(createdAt + 300)
-//            throw TooManyRequestsException(1)
+            throw TooManyRequestsException(createdAt + 100)
         }
 
         paymentExecutor.submit {
