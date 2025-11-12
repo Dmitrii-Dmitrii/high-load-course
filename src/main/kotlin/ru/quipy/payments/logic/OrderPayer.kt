@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Service
 class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") private val rateLimitPerSec: Int) {
-    private var queueCapacity: Int = 7
+    private var queueCapacity: Int = 52
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
@@ -34,9 +34,9 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
     private lateinit var paymentService: PaymentService
 
     private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
-        0L,
+        50,
+        50,
+        100L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(queueCapacity),
         NamedThreadFactory("payment-submission-executor"),

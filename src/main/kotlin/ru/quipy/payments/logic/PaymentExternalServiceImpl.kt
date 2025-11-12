@@ -33,7 +33,7 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
-    private val requestTimeout = requestAverageProcessingTime.toMillis()
+    private val requestTimeout = 2 * requestAverageProcessingTime.toMillis()
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
@@ -99,7 +99,7 @@ class PaymentExternalSystemAdapterImpl(
             }.build()
 
             val clientCall = client.newCall(request)
-            val clientCallTimeout = minOf(requestTimeout, requestTimeout)
+            val clientCallTimeout = minOf(requestTimeout, deadlineTimeout)
             clientCall.timeout().timeout(clientCallTimeout, TimeUnit.MILLISECONDS)
 
             clientCall.execute().use { response ->

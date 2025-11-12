@@ -45,7 +45,8 @@ class PaymentSystemImpl(
             .labelNames("status_code")
             .register(prometheusRegistry)
 
-    private val maxRetries = 25
+    private val maxRetries = 2
+    private val retryCodes: List<Int> = listOf(429, 500, 502, 503, 504)
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         for (account in paymentAccounts) {
@@ -57,9 +58,9 @@ class PaymentSystemImpl(
                 if (res.first) {
                     successCounter.increment()
                     break
-                } else {
+                } else if (retryCodes.contains(res.second)) {
                     failCounter.increment()
-                    Thread.sleep((10 * i).toLong())
+                    Thread.sleep((6600 * i).toLong())
                 }
             }
         }
