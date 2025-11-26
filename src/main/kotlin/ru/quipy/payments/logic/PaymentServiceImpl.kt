@@ -2,21 +2,15 @@ package ru.quipy.payments.logic
 
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import io.prometheus.metrics.core.metrics.Summary
 import io.prometheus.metrics.model.registry.PrometheusRegistry
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NamedThreadFactory
-import ru.quipy.core.EventSourcingService
-import ru.quipy.payments.api.PaymentAggregate
-import java.time.Duration
 import java.util.*
 import java.util.concurrent.Executors
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
-import kotlin.time.toDuration
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 
 @Service
@@ -24,8 +18,14 @@ class PaymentSystemImpl(
     private val paymentAccounts: List<PaymentExternalSystemAdapter>,
     meterRegistry: MeterRegistry,
     prometheusRegistry: PrometheusRegistry,
+    private val retryScheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(
+        maxOf(2, maxOf(1, paymentAccounts.size) * 2),
+        NamedThreadFactory("payment-retry-scheduler")
+    ),
+    private val baseRetryDelayMillis: Long = DEFAULT_RETRY_DELAY_MILLIS,
 ) : PaymentService {
     companion object {
+        private const val DEFAULT_RETRY_DELAY_MILLIS = 6_600L
         val logger = LoggerFactory.getLogger(PaymentSystemImpl::class.java)
     }
 
@@ -49,20 +49,104 @@ class PaymentSystemImpl(
     private val retryCodes: List<Int> = listOf(429, 500, 502, 503, 504)
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        for (account in paymentAccounts) {
-            for (i in 1..maxRetries) {
-                val start = System.currentTimeMillis()
-                val res = account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+        val activeAccounts = paymentAccounts.filter { it.isEnabled() }
+        if (activeAccounts.isEmpty()) {
+            logger.warn("No enabled payment accounts to process payment {}", paymentId)
+            return
+        }
+
+        activeAccounts.forEach { account ->
+            dispatchPayment(account, paymentId, amount, paymentStartedAt, deadline, attempt = 1)
+        }
+    }
+
+    private fun dispatchPayment(
+        account: PaymentExternalSystemAdapter,
+        paymentId: UUID,
+        amount: Int,
+        paymentStartedAt: Long,
+        deadline: Long,
+        attempt: Int,
+    ) {
+        if (deadline <= System.currentTimeMillis()) {
+            logger.warn(
+                "[{}] Deadline exceeded before attempt {} for payment {}",
+                account.name(),
+                attempt,
+                paymentId
+            )
+            return
+        }
+
+        val start = System.currentTimeMillis()
+        account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+            .whenComplete { result, throwable ->
                 val duration = System.currentTimeMillis() - start
-                requestLatency.labelValues(res.second.toString()).observe(duration.toDouble())
-                if (res.first) {
+                val statusCode = resolveStatusCode(result, throwable)
+                requestLatency.labelValues(statusCode.toString()).observe(duration.toDouble())
+
+                if (throwable != null) {
+                    logger.warn(
+                        "[{}] Payment {} attempt {} failed with exception: {}",
+                        account.name(),
+                        paymentId,
+                        attempt,
+                        throwable.message
+                    )
+                    handleFailure(account, paymentId, amount, paymentStartedAt, deadline, attempt, statusCode)
+                    return@whenComplete
+                }
+
+                if (result?.success == true) {
                     successCounter.increment()
-                    break
-                } else if (retryCodes.contains(res.second)) {
-                    failCounter.increment()
-                    Thread.sleep((6600 * i).toLong())
+                } else {
+                    handleFailure(account, paymentId, amount, paymentStartedAt, deadline, attempt, statusCode)
                 }
             }
+    }
+
+    private fun handleFailure(
+        account: PaymentExternalSystemAdapter,
+        paymentId: UUID,
+        amount: Int,
+        paymentStartedAt: Long,
+        deadline: Long,
+        attempt: Int,
+        statusCode: Int,
+    ) {
+        if (!retryCodes.contains(statusCode)) {
+            return
+        }
+
+        failCounter.increment()
+
+        if (attempt >= maxRetries) {
+            logger.warn("[{}] Max retries reached for payment {}", account.name(), paymentId)
+            return
+        }
+
+        val delay = retryDelay(attempt)
+        val scheduledAt = System.currentTimeMillis() + delay
+        if (scheduledAt >= deadline) {
+            logger.warn("[{}] Skip retry for payment {} due to deadline", account.name(), paymentId)
+            return
+        }
+
+        retryScheduler.schedule(
+            {
+                dispatchPayment(account, paymentId, amount, paymentStartedAt, deadline, attempt + 1)
+            },
+            delay,
+            TimeUnit.MILLISECONDS
+        )
+    }
+
+    private fun retryDelay(attempt: Int) = baseRetryDelayMillis * attempt
+
+    private fun resolveStatusCode(result: PaymentResult?, throwable: Throwable?): Int {
+        return result?.statusCode ?: when (throwable) {
+            is TooManyRequestsException -> 429
+            else -> 500
         }
     }
 }

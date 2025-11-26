@@ -2,6 +2,7 @@ package ru.quipy.payments.logic
 
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.CompletableFuture
 
 interface PaymentService {
     /**
@@ -17,7 +18,12 @@ interface PaymentService {
 
  */
 interface PaymentExternalSystemAdapter {
-    fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long): Pair<Boolean, Int>
+    fun performPaymentAsync(
+        paymentId: UUID,
+        amount: Int,
+        paymentStartedAt: Long,
+        deadline: Long
+    ): CompletableFuture<PaymentResult>
 
     fun name(): String
 
@@ -46,6 +52,12 @@ class ExternalSysResponse(
     val transactionId: String,
     val paymentId: String,
     val result: Boolean,
+    val message: String? = null,
+)
+
+data class PaymentResult(
+    val success: Boolean,
+    val statusCode: Int,
     val message: String? = null,
 )
 
