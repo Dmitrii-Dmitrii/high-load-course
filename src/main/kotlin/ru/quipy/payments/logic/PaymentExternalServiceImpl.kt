@@ -9,6 +9,7 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.net.http.HttpClient
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.CompletableFuture
@@ -44,9 +45,12 @@ class PaymentExternalSystemAdapterImpl(
 
     private val connectionPool = ConnectionPool(parallelRequests * 2, 2, TimeUnit.MINUTES)
 
+    //   private val cl = HttpClient(connectionPool) TODO: try apache
     private val client = OkHttpClient.Builder()
         .dispatcher(dispatcher)
         .connectionPool(connectionPool)
+        .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+        .pingInterval(20, TimeUnit.SECONDS)
         .connectTimeout(requestTimeout, TimeUnit.MILLISECONDS)
         .callTimeout(requestTimeout, TimeUnit.MILLISECONDS)
         .readTimeout(requestTimeout, TimeUnit.MILLISECONDS)
