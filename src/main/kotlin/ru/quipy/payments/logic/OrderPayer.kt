@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Service
 class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") private val rateLimitPerSec: Int) {
-    private var queueCapacity: Int = 52
+    private var queueCapacity: Int = 2000
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
@@ -34,8 +34,8 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
     private lateinit var paymentService: PaymentService
 
     private val paymentExecutor = ThreadPoolExecutor(
-        50,
-        50,
+        200,
+        200,
         100L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(queueCapacity),
@@ -59,7 +59,7 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
         }
 
         val deadlineTimeout = maxOf(0, deadline - createdAt)
-        if (!paymentLimiter.tickBlocking(Duration.ofSeconds(deadlineTimeout))) {
+        if (!paymentLimiter.tickBlocking(Duration.ofMillis(deadlineTimeout))) {
             throw TooManyRequestsException(createdAt + 100)
         }
 

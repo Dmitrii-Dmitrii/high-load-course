@@ -2,17 +2,18 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import okhttp3.*
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import java.io.IOException
-import java.net.SocketTimeoutException
+import java.net.URI
 import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 
@@ -26,9 +27,14 @@ class PaymentExternalSystemAdapterImpl(
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
-
-        val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
+
+        init {
+            System.setProperty("jdk.httpclient.connectionPoolSize", "500")
+            System.setProperty("jdk.httpclient.keepalive.timeout", "120")
+            System.setProperty("jdk.httpclient.receiveBufferSize", "524288")
+            System.setProperty("jdk.httpclient.sendBufferSize", "524288")
+        }
     }
 
     private val serviceName = properties.serviceName
@@ -38,23 +44,13 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val dispatcher = Dispatcher().apply {
-        maxRequests = parallelRequests * 4
-        maxRequestsPerHost = parallelRequests * 2
-    }
 
-    private val connectionPool = ConnectionPool(parallelRequests * 2, 2, TimeUnit.MINUTES)
+    private val executor = Executors.newCachedThreadPool()
 
-    //   private val cl = HttpClient(connectionPool) TODO: try apache
-    private val client = OkHttpClient.Builder()
-        .dispatcher(dispatcher)
-        .connectionPool(connectionPool)
-        .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
-        .pingInterval(20, TimeUnit.SECONDS)
-        .connectTimeout(requestTimeout, TimeUnit.MILLISECONDS)
-        .callTimeout(requestTimeout, TimeUnit.MILLISECONDS)
-        .readTimeout(requestTimeout, TimeUnit.MILLISECONDS)
-        .writeTimeout(requestTimeout, TimeUnit.MILLISECONDS)
+    private val httpClient = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_2)
+        .executor(executor)
+        .connectTimeout(Duration.ofSeconds(requestTimeout))
         .build()
 
     private val paymentLimiter =
@@ -114,60 +110,56 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submitting payment request for payment $paymentId")
 
-        // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
         paymentESService.update(paymentId) {
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        val request = Request.Builder()
-            .url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
-            .post(emptyBody)
+        val url = "http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
+
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .timeout(Duration.ofMillis(minOf(requestTimeout, deadlineTimeout)))
             .build()
 
-        val clientCall = client.newCall(request)
-        val clientCallTimeout = minOf(requestTimeout, deadlineTimeout)
-        clientCall.timeout().timeout(clientCallTimeout, TimeUnit.MILLISECONDS)
-
-        clientCall.enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
+        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .whenComplete { response, throwable ->
                 if (resultFuture.isDone) {
-                    return
+                    return@whenComplete
                 }
 
-                val (status, reason) = when (e) {
-                    is SocketTimeoutException -> 408 to "Request timeout."
-                    else -> 500 to (e.message ?: "Unknown error")
-                }
-                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-                logProcessingFailure(paymentId, transactionId, reason)
-                resultFuture.complete(PaymentResult(false, status, reason))
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    val rawBody = response.body?.string()
-                    val body = try {
-                        mapper.readValue(rawBody, ExternalSysResponse::class.java)
-                    } catch (e: Exception) {
-                        logger.error(
-                            "[$accountName] Unable to parse response for txId: $transactionId, payment: $paymentId, rawBody: $rawBody",
-                            e
-                        )
-                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                if (throwable != null) {
+                    val (status, reason) = when {
+                        throwable is java.net.http.HttpTimeoutException ||
+                        throwable.cause is java.net.http.HttpTimeoutException -> 408 to "Request timeout."
+                        else -> 500 to (throwable.message ?: "Unknown error")
                     }
+                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", throwable)
+                    logProcessingFailure(paymentId, transactionId, reason)
+                    resultFuture.complete(PaymentResult(false, status, reason))
+                    return@whenComplete
+                }
 
-                    logger.info(
-                        "[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}"
+                val rawBody = response.body()
+                val body = try {
+                    mapper.readValue(rawBody, ExternalSysResponse::class.java)
+                } catch (e: Exception) {
+                    logger.error(
+                        "[$accountName] Unable to parse response for txId: $transactionId, payment: $paymentId, rawBody: $rawBody",
+                        e
                     )
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                    }
-                    resultFuture.complete(PaymentResult(body.result, response.code, body.message))
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
+
+                logger.info(
+                    "[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}"
+                )
+
+                paymentESService.update(paymentId) {
+                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                }
+                resultFuture.complete(PaymentResult(body.result, response.statusCode(), body.message))
             }
-        })
 
         return resultFuture
     }
