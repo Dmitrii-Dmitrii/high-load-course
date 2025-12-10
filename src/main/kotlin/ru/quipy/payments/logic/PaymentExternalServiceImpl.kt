@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.domain.Event
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -40,9 +41,10 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
-    private val requestTimeout = 2 * requestAverageProcessingTime.toMillis()
+    private val requestTimeout = 3 * requestAverageProcessingTime.toMillis()
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val retryCodes: List<Int> = listOf(429, 500, 502, 503, 504)
 
 
     private val executor = Executors.newCachedThreadPool()
@@ -57,6 +59,7 @@ class PaymentExternalSystemAdapterImpl(
         SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong(), window = Duration.ofSeconds(1))
 
     private val semaphore = Semaphore(parallelRequests)
+    private var i = 0
 
     override fun performPaymentAsync(
         paymentId: UUID,
@@ -64,6 +67,7 @@ class PaymentExternalSystemAdapterImpl(
         paymentStartedAt: Long,
         deadline: Long
     ): CompletableFuture<PaymentResult> {
+        i += 1
         val transactionId = UUID.randomUUID()
         val resultFuture = CompletableFuture<PaymentResult>()
 
@@ -110,11 +114,12 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submitting payment request for payment $paymentId")
 
-        paymentESService.update(paymentId) {
-            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        asyncUpdate(paymentId) { state ->
+            state.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        val url = "http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
+        val url =
+            "http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
 
         val request = HttpRequest.newBuilder()
             .uri(URI.create(url))
@@ -131,10 +136,14 @@ class PaymentExternalSystemAdapterImpl(
                 if (throwable != null) {
                     val (status, reason) = when {
                         throwable is java.net.http.HttpTimeoutException ||
-                        throwable.cause is java.net.http.HttpTimeoutException -> 408 to "Request timeout."
+                                throwable.cause is java.net.http.HttpTimeoutException -> 408 to "Request timeout."
+
                         else -> 500 to (throwable.message ?: "Unknown error")
                     }
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", throwable)
+                    logger.error(
+                        "[$accountName] Payment failed for txId: $transactionId, payment: $paymentId",
+                        throwable
+                    )
                     logProcessingFailure(paymentId, transactionId, reason)
                     resultFuture.complete(PaymentResult(false, status, reason))
                     return@whenComplete
@@ -155,8 +164,18 @@ class PaymentExternalSystemAdapterImpl(
                     "[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}"
                 )
 
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                if (retryCodes.contains(response.statusCode())) {
+                    val retryAfter = System.currentTimeMillis() + 100
+                    logger.warn("[$accountName] External system returned 429 for txId: $transactionId, payment: $paymentId")
+                    asyncUpdate(paymentId) { state ->
+                        state.logProcessing(false, now(), transactionId, reason = body.message)
+                    }
+                    resultFuture.completeExceptionally(TooManyRequestsException(retryAfter))
+                    return@whenComplete
+                }
+
+                asyncUpdate(paymentId) { state ->
+                    state.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
                 resultFuture.complete(PaymentResult(body.result, response.statusCode(), body.message))
             }
@@ -164,9 +183,19 @@ class PaymentExternalSystemAdapterImpl(
         return resultFuture
     }
 
+    private fun asyncUpdate(paymentId: UUID, action: (PaymentAggregateState) -> Event<PaymentAggregate>) {
+        CompletableFuture.runAsync({
+            try {
+                paymentESService.update(paymentId) { state -> action(state) }
+            } catch (e: Exception) {
+                logger.error("[$accountName] Failed to update payment aggregate for $paymentId", e)
+            }
+        }, executor)
+    }
+
     private fun logProcessingFailure(paymentId: UUID, transactionId: UUID, reason: String?) {
-        paymentESService.update(paymentId) {
-            it.logProcessing(false, now(), transactionId, reason = reason)
+        asyncUpdate(paymentId) { state ->
+            state.logProcessing(false, now(), transactionId, reason = reason)
         }
     }
 

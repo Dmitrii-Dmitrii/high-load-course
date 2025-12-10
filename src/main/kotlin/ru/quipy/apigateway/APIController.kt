@@ -25,10 +25,12 @@ class APIController(meterRegistry: MeterRegistry) {
     private val orderLimiter = SlidingWindowRateLimiter(28, Duration.ofSeconds(1))
 
     private val createOrderCounter =
-        Counter.builder("http_request_create_order").description("Counts the number of createOrder requests").register(meterRegistry)
+        Counter.builder("http_request_create_order").description("Counts the number of createOrder requests")
+            .register(meterRegistry)
 
     private val payOrderCounter =
-        Counter.builder("http_request_pay_order").description("Counts the number of payOrder requests").register(meterRegistry)
+        Counter.builder("http_request_pay_order").description("Counts the number of payOrder requests")
+            .register(meterRegistry)
 
     @Autowired
     private lateinit var orderRepository: OrderRepository
@@ -85,6 +87,23 @@ class APIController(meterRegistry: MeterRegistry) {
             createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         } catch (e: TooManyRequestsException) {
             val headers = HttpHeaders()
+            logger.warn(
+                "------------------------\n" +
+                        "░░░░░░░░░░░░░██\n" +
+                        "░░░░░░░░░░░░█░░█\n" +
+                        "░░░░░░░░░░░░█░░█\n" +
+                        "░░░░░░░░░░░█░░░█\n" +
+                        "░░░░░░░░░░█░░░░█\n" +
+                        "████████▄▄█░░░░░███████████▄\n" +
+                        "▓▓▓▓▓▓▓█░░░░░░░░░░░░░░░░░░░█\n" +
+                        "▓▓▓▓▓▓▓█░░█░░░█▀█░█▀▀░█▀█░░░█\n" +
+                        "▓▓▓▓▓▓▓█▀▀█▀▀░█▀▄░█▀░░█▀▀░░░█\n" +
+                        "▓▓▓▓▓▓▓█░░█░░░▀░▀░▀▀▀░▀░░░░█\n" +
+                        "▓▓▓▓▓▓▓█░░░░░░░░░░░░░░░░░░█\n" +
+                        "▓▓▓▓▓▓▓█████░░░░░░░░░░░░░█\n" +
+                        "███████▀░░░░▀▀██████████▀\n" +
+                        "-------------------------------------------------------------------------------------------------------"
+            )
             headers.add("Retry-After", e.retryAfter.toString())
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).headers(headers).build()
         }

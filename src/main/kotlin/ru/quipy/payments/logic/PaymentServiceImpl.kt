@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NamedThreadFactory
 import java.util.*
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -48,16 +49,24 @@ class PaymentSystemImpl(
     private val maxRetries = 2
     private val retryCodes: List<Int> = listOf(429, 500, 502, 503, 504)
 
-    override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+    override fun submitPaymentRequest(
+        paymentId: UUID,
+        amount: Int,
+        paymentStartedAt: Long,
+        deadline: Long
+    ): CompletableFuture<Void> {
         val activeAccounts = paymentAccounts.filter { it.isEnabled() }
         if (activeAccounts.isEmpty()) {
             logger.warn("No enabled payment accounts to process payment {}", paymentId)
-            return
+            return CompletableFuture.completedFuture(null)
         }
 
-        activeAccounts.forEach { account ->
+        val futures = activeAccounts.map { account ->
             dispatchPayment(account, paymentId, amount, paymentStartedAt, deadline, attempt = 1)
         }
+
+        return CompletableFuture.allOf(*futures.toTypedArray())
+            .thenApply { null }
     }
 
     private fun dispatchPayment(
@@ -67,7 +76,7 @@ class PaymentSystemImpl(
         paymentStartedAt: Long,
         deadline: Long,
         attempt: Int,
-    ) {
+    ): CompletableFuture<Void> {
         if (deadline <= System.currentTimeMillis()) {
             logger.warn(
                 "[{}] Deadline exceeded before attempt {} for payment {}",
@@ -75,17 +84,26 @@ class PaymentSystemImpl(
                 attempt,
                 paymentId
             )
-            return
+            return CompletableFuture.completedFuture(null)
         }
 
         val start = System.currentTimeMillis()
-        account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
-            .whenComplete { result, throwable ->
+        return account.performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+            .handle { result, throwable ->
                 val duration = System.currentTimeMillis() - start
                 val statusCode = resolveStatusCode(result, throwable)
                 requestLatency.labelValues(statusCode.toString()).observe(duration.toDouble())
 
                 if (throwable != null) {
+                    if (throwable is TooManyRequestsException) {
+                        logger.warn(
+                            "[{}] Payment {} attempt {} failed with TooManyRequestsException, propagating",
+                            account.name(),
+                            paymentId,
+                            attempt
+                        )
+                        throw throwable
+                    }
                     logger.warn(
                         "[{}] Payment {} attempt {} failed with exception: {}",
                         account.name(),
@@ -94,7 +112,7 @@ class PaymentSystemImpl(
                         throwable.message
                     )
                     handleFailure(account, paymentId, amount, paymentStartedAt, deadline, attempt, statusCode)
-                    return@whenComplete
+                    return@handle null
                 }
 
                 if (result?.success == true) {
@@ -102,6 +120,7 @@ class PaymentSystemImpl(
                 } else {
                     handleFailure(account, paymentId, amount, paymentStartedAt, deadline, attempt, statusCode)
                 }
+                null
             }
     }
 

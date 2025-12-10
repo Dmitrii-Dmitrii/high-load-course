@@ -13,6 +13,7 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -43,7 +44,8 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val paymentLimiter = LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1), rateLimitPerSec)
+    private val paymentLimiter =
+        LeakingBucketRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1), rateLimitPerSec)
 
     private val processPaymentsGauge = AtomicInteger()
 
@@ -67,7 +69,7 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
             throw TooManyRequestsException(createdAt + 100)
         }
 
-        paymentExecutor.submit {
+        val paymentFuture = CompletableFuture.runAsync({
             val createdEvent = paymentESService.create {
                 it.create(
                     paymentId,
@@ -77,7 +79,20 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
             }
             logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
 
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline).join()
+        }, paymentExecutor)
+
+        try {
+            paymentFuture.join()
+        } catch (e: Exception) {
+            var current: Throwable? = e
+            while (current != null) {
+                if (current is TooManyRequestsException) {
+                    throw current
+                }
+                current = current.cause
+            }
+            throw e
         }
 
         processPaymentsGauge.set(paymentExecutor.queue.size)
