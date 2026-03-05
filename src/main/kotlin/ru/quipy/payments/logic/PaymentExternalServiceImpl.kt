@@ -15,6 +15,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
 
@@ -24,6 +25,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    private val hedgeThresholdMillis: Long = 0,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -49,6 +51,8 @@ class PaymentExternalSystemAdapterImpl(
 
     private val executor = Executors.newCachedThreadPool()
 
+    private val hedgeScheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(1)
+
     private val httpClient = HttpClient.newBuilder()
         .version(HttpClient.Version.HTTP_2)
         .executor(executor)
@@ -71,7 +75,7 @@ class PaymentExternalSystemAdapterImpl(
         val transactionId = UUID.randomUUID()
         val resultFuture = CompletableFuture<PaymentResult>()
 
-        val remainingTime = maxOf(0, deadline - System.currentTimeMillis())
+        val remainingTime = maxOf(0, deadline - now())
         if (remainingTime <= 0) {
             logger.warn("[$accountName] Deadline already exceeded for payment $paymentId")
             logProcessingFailure(paymentId, transactionId, "Deadline exceeded before submission")
@@ -95,10 +99,9 @@ class PaymentExternalSystemAdapterImpl(
             return resultFuture
         }
 
-        resultFuture.whenComplete { _, _ -> semaphore.release() }
-
-        val deadlineTimeout = maxOf(0, deadline - System.currentTimeMillis())
+        val deadlineTimeout = maxOf(0, deadline - now())
         if (deadlineTimeout <= 0) {
+            semaphore.release()
             logger.warn("[$accountName] Deadline exceeded after semaphore acquisition for $paymentId")
             logProcessingFailure(paymentId, transactionId, "Deadline exceeded after semaphore acquisition")
             resultFuture.complete(PaymentResult(false, 408, "Deadline exceeded"))
@@ -106,6 +109,7 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         if (!paymentLimiter.tickBlocking(Duration.ofMillis(deadlineTimeout))) {
+            semaphore.release()
             logger.warn("[$accountName] Rate limiter timeout before payment for $paymentId")
             logProcessingFailure(paymentId, transactionId, "Rate limiter timeout")
             resultFuture.complete(PaymentResult(false, 429, "Rate limiter timeout"))
@@ -118,26 +122,79 @@ class PaymentExternalSystemAdapterImpl(
             state.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
+        val firstHttpFuture = sendHttpRequest(paymentId, amount, paymentStartedAt, deadline, transactionId)
+        firstHttpFuture.whenComplete { result, throwable ->
+            semaphore.release()
+            if (!resultFuture.isDone) {
+                if (throwable != null) resultFuture.completeExceptionally(throwable)
+                else resultFuture.complete(result)
+            }
+        }
+
+        val hedgeTask = if (hedgeThresholdMillis > 0) {
+            hedgeScheduler.schedule({
+                if (resultFuture.isDone) return@schedule
+
+                val remaining = deadline - now()
+                if (remaining <= 0) return@schedule
+
+                val hedgeAcquired = semaphore.tryAcquire()
+                if (!hedgeAcquired) {
+                    logger.debug("[$accountName] Hedge skipped: semaphore unavailable for payment $paymentId")
+                    return@schedule
+                }
+
+                val dt = maxOf(0, deadline - now())
+                if (!paymentLimiter.tickBlocking(Duration.ofMillis(dt))) {
+                    semaphore.release()
+                    logger.debug("[$accountName] Hedge skipped: rate limiter timeout for payment $paymentId")
+                    return@schedule
+                }
+
+                logger.info("[$accountName] Sending hedge request for payment $paymentId after ${hedgeThresholdMillis}ms")
+
+                val hedgeHttpFuture = sendHttpRequest(paymentId, amount, paymentStartedAt, deadline, transactionId)
+                hedgeHttpFuture.whenComplete { result, throwable ->
+                    semaphore.release()
+                    if (!resultFuture.isDone) {
+                        if (throwable != null) resultFuture.completeExceptionally(throwable)
+                        else resultFuture.complete(result)
+                    }
+                }
+            }, hedgeThresholdMillis, TimeUnit.MILLISECONDS)
+        } else null
+
+        resultFuture.whenComplete { _, _ -> hedgeTask?.cancel(false) }
+
+        return resultFuture
+    }
+
+    private fun sendHttpRequest(
+        paymentId: UUID,
+        amount: Int,
+        paymentStartedAt: Long,
+        deadline: Long,
+        transactionId: UUID,
+    ): CompletableFuture<PaymentResult> {
+        val httpFuture = CompletableFuture<PaymentResult>()
+        val deadlineTimeout = maxOf(0, deadline - now())
+
         val url =
             "http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
 
         val request = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .POST(HttpRequest.BodyPublishers.noBody())
+            .header("x-idempotency-key", transactionId.toString())
             .timeout(Duration.ofMillis(minOf(requestTimeout, deadlineTimeout)))
             .build()
 
         httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
             .whenComplete { response, throwable ->
-                if (resultFuture.isDone) {
-                    return@whenComplete
-                }
-
                 if (throwable != null) {
                     val (status, reason) = when {
                         throwable is java.net.http.HttpTimeoutException ||
                                 throwable.cause is java.net.http.HttpTimeoutException -> 408 to "Request timeout."
-
                         else -> 500 to (throwable.message ?: "Unknown error")
                     }
                     logger.error(
@@ -145,7 +202,7 @@ class PaymentExternalSystemAdapterImpl(
                         throwable
                     )
                     logProcessingFailure(paymentId, transactionId, reason)
-                    resultFuture.complete(PaymentResult(false, status, reason))
+                    httpFuture.complete(PaymentResult(false, status, reason))
                     return@whenComplete
                 }
 
@@ -165,22 +222,22 @@ class PaymentExternalSystemAdapterImpl(
                 )
 
                 if (retryCodes.contains(response.statusCode())) {
-                    val retryAfter = System.currentTimeMillis() + 100
-                    logger.warn("[$accountName] External system returned 429 for txId: $transactionId, payment: $paymentId")
+                    val retryAfter = now() + 100
+                    logger.warn("[$accountName] External system returned ${response.statusCode()} for txId: $transactionId, payment: $paymentId")
                     asyncUpdate(paymentId) { state ->
                         state.logProcessing(false, now(), transactionId, reason = body.message)
                     }
-                    resultFuture.completeExceptionally(TooManyRequestsException(retryAfter))
+                    httpFuture.completeExceptionally(TooManyRequestsException(retryAfter))
                     return@whenComplete
                 }
 
                 asyncUpdate(paymentId) { state ->
                     state.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
-                resultFuture.complete(PaymentResult(body.result, response.statusCode(), body.message))
+                httpFuture.complete(PaymentResult(body.result, response.statusCode(), body.message))
             }
 
-        return resultFuture
+        return httpFuture
     }
 
     private fun asyncUpdate(paymentId: UUID, action: (PaymentAggregateState) -> Event<PaymentAggregate>) {
