@@ -77,7 +77,7 @@ class OrderPayer(meterRegistry: MeterRegistry, @Value("\${payment.rps:16}") priv
                     amount
                 )
             }
-            logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
+//            logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline).join()
         }, paymentExecutor)

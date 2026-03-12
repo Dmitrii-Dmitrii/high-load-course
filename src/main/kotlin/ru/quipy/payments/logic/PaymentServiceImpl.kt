@@ -57,7 +57,7 @@ class PaymentSystemImpl(
     ): CompletableFuture<Void> {
         val activeAccounts = paymentAccounts.filter { it.isEnabled() }
         if (activeAccounts.isEmpty()) {
-            logger.warn("No enabled payment accounts to process payment {}", paymentId)
+//            logger.warn("No enabled payment accounts to process payment {}", paymentId)
             return CompletableFuture.completedFuture(null)
         }
 
@@ -78,12 +78,12 @@ class PaymentSystemImpl(
         attempt: Int,
     ): CompletableFuture<Void> {
         if (deadline <= System.currentTimeMillis()) {
-            logger.warn(
-                "[{}] Deadline exceeded before attempt {} for payment {}",
-                account.name(),
-                attempt,
-                paymentId
-            )
+//            logger.warn(
+//                "[{}] Deadline exceeded before attempt {} for payment {}",
+//                account.name(),
+//                attempt,
+//                paymentId
+//            )
             return CompletableFuture.completedFuture(null)
         }
 
@@ -96,21 +96,21 @@ class PaymentSystemImpl(
 
                 if (throwable != null) {
                     if (throwable is TooManyRequestsException) {
-                        logger.warn(
-                            "[{}] Payment {} attempt {} failed with TooManyRequestsException, propagating",
-                            account.name(),
-                            paymentId,
-                            attempt
-                        )
+//                        logger.warn(
+//                            "[{}] Payment {} attempt {} failed with TooManyRequestsException, propagating",
+//                            account.name(),
+//                            paymentId,
+//                            attempt
+//                        )
                         throw throwable
                     }
-                    logger.warn(
-                        "[{}] Payment {} attempt {} failed with exception: {}",
-                        account.name(),
-                        paymentId,
-                        attempt,
-                        throwable.message
-                    )
+//                    logger.warn(
+//                        "[{}] Payment {} attempt {} failed with exception: {}",
+//                        account.name(),
+//                        paymentId,
+//                        attempt,
+//                        throwable.message
+//                    )
                     handleFailure(account, paymentId, amount, paymentStartedAt, deadline, attempt, statusCode)
                     return@handle null
                 }
@@ -140,14 +140,14 @@ class PaymentSystemImpl(
         failCounter.increment()
 
         if (attempt >= maxRetries) {
-            logger.warn("[{}] Max retries reached for payment {}", account.name(), paymentId)
+//            logger.warn("[{}] Max retries reached for payment {}", account.name(), paymentId)
             return
         }
 
         val delay = retryDelay(attempt)
         val scheduledAt = System.currentTimeMillis() + delay
         if (scheduledAt >= deadline) {
-            logger.warn("[{}] Skip retry for payment {} due to deadline", account.name(), paymentId)
+//            logger.warn("[{}] Skip retry for payment {} due to deadline", account.name(), paymentId)
             return
         }
 

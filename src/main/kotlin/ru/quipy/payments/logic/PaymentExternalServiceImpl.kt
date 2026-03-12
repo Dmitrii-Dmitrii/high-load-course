@@ -188,7 +188,7 @@ class PaymentExternalSystemAdapterImpl(
             try {
                 paymentESService.update(paymentId) { state -> action(state) }
             } catch (e: Exception) {
-                logger.error("[$accountName] Failed to update payment aggregate for $paymentId", e)
+//                logger.error("[$accountName] Failed to update payment aggregate for $paymentId", e)
             }
         }, executor)
     }

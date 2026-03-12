@@ -46,7 +46,7 @@ class FixedWindowRateLimiter(
                     semaphore.release()
                 }.onFailure { th -> logger.error("Failed while releasing permits", th) }
             }
-            logger.trace("Semaphore ${semaphoreNumber}. Released $permitsToRelease permits")
+//            logger.trace("Semaphore ${semaphoreNumber}. Released $permitsToRelease permits")
 
             delay(nextExpectedWakeUp - System.currentTimeMillis())
         }
@@ -95,7 +95,7 @@ class SlowStartRateLimiter(
                     semaphore.release()
                 }.onFailure { th -> logger.error("Failed while releasing permits", th) }
             }
-            logger.trace("Rate limiter ${rateLimiterNum}. Released $permitsToRelease permits")
+//            logger.trace("Rate limiter ${rateLimiterNum}. Released $permitsToRelease permits")
 
             if (slowStartOn && currentRate < targetRate) {
                 currentRate = minOf(targetRate, currentRate * 2)
