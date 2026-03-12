@@ -18,6 +18,7 @@ import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 
 // Advice: always treat time as a Duration
@@ -61,14 +62,13 @@ class PaymentExternalSystemAdapterImpl(
     private val httpClient = HttpClient.newBuilder()
         .version(HttpClient.Version.HTTP_2)
         .executor(executor)
-        .connectTimeout(Duration.ofSeconds(requestTimeout))
+        .connectTimeout(Duration.ofMillis(requestTimeout))
         .build()
 
     private val paymentLimiter =
         SlidingWindowRateLimiter(rate = rateLimitPerSec.toLong(), window = Duration.ofSeconds(1))
 
     private val semaphore = Semaphore(parallelRequests)
-    private var i = 0
 
     override fun performPaymentAsync(
         paymentId: UUID,
@@ -76,7 +76,6 @@ class PaymentExternalSystemAdapterImpl(
         paymentStartedAt: Long,
         deadline: Long
     ): CompletableFuture<PaymentResult> {
-        i += 1
         val transactionId = UUID.randomUUID()
         val resultFuture = CompletableFuture<PaymentResult>()
 
@@ -136,23 +135,25 @@ class PaymentExternalSystemAdapterImpl(
             .timeout(Duration.ofMillis(minOf(requestTimeout, deadlineTimeout)))
             .build()
 
-        val responseHandler = java.util.function.BiConsumer<HttpResponse<String>?, Throwable?> { response, throwable ->
-            if (resultFuture.isDone) return@BiConsumer
+        val hedgeSent = AtomicBoolean(false)
+
+        fun handleResponse(response: HttpResponse<String>?, throwable: Throwable?, isPrimary: Boolean) {
+            if (resultFuture.isDone) return
 
             if (throwable != null) {
-                val (status, reason) = when {
-                    throwable is java.net.http.HttpTimeoutException ||
-                            throwable.cause is java.net.http.HttpTimeoutException -> 408 to "Request timeout."
+                val isTimeout = throwable is java.net.http.HttpTimeoutException ||
+                        throwable.cause is java.net.http.HttpTimeoutException
 
-                    else -> 500 to (throwable.message ?: "Unknown error")
+                if (isPrimary && isTimeout && hedgeSent.get()) {
+                    logger.warn("[$accountName] Primary timed out, hedge in flight for payment $paymentId — awaiting hedge result")
+                    return
                 }
-                logger.error(
-                    "[$accountName] Payment failed for txId: $transactionId, payment: $paymentId",
-                    throwable
-                )
+
+                val (status, reason) = if (isTimeout) 408 to "Request timeout." else 500 to (throwable.message ?: "Unknown error")
+                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", throwable)
                 logProcessingFailure(paymentId, transactionId, reason)
                 resultFuture.complete(PaymentResult(false, status, reason))
-                return@BiConsumer
+                return
             }
 
             val rawBody = response!!.body()
@@ -177,7 +178,7 @@ class PaymentExternalSystemAdapterImpl(
                     state.logProcessing(false, now(), transactionId, reason = body.message)
                 }
                 resultFuture.completeExceptionally(TooManyRequestsException(retryAfter))
-                return@BiConsumer
+                return
             }
 
             asyncUpdate(paymentId) { state ->
@@ -186,7 +187,8 @@ class PaymentExternalSystemAdapterImpl(
             resultFuture.complete(PaymentResult(body.result, response.statusCode(), body.message))
         }
 
-        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete(responseHandler)
+        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .whenComplete { response, throwable -> handleResponse(response, throwable, isPrimary = true) }
 
         CompletableFuture.runAsync({
             val remaining = deadline - System.currentTimeMillis()
@@ -198,9 +200,11 @@ class PaymentExternalSystemAdapterImpl(
                 .timeout(Duration.ofMillis(minOf(requestTimeout, remaining)))
                 .build()
 
+            hedgeSent.set(true)
             hedgeCounter.increment()
             logger.info("[$accountName] Sending hedge request for payment $paymentId, txId: $transactionId")
-            httpClient.sendAsync(hedgeRequest, HttpResponse.BodyHandlers.ofString()).whenComplete(responseHandler)
+            httpClient.sendAsync(hedgeRequest, HttpResponse.BodyHandlers.ofString())
+                .whenComplete { response, throwable -> handleResponse(response, throwable, isPrimary = false) }
         }, CompletableFuture.delayedExecutor(hedgeDelayMs, TimeUnit.MILLISECONDS, executor))
 
         return resultFuture
