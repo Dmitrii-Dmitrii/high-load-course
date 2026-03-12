@@ -73,7 +73,7 @@ class PaymentExternalSystemAdapterImpl(
 
         val remainingTime = maxOf(0, deadline - System.currentTimeMillis())
         if (remainingTime <= 0) {
-            logger.warn("[$accountName] Deadline already exceeded for payment $paymentId")
+//            logger.warn("[$accountName] Deadline already exceeded for payment $paymentId")
             logProcessingFailure(paymentId, transactionId, "Deadline exceeded before submission")
             resultFuture.complete(PaymentResult(false, 408, "Deadline exceeded before submission"))
             return resultFuture
@@ -83,13 +83,13 @@ class PaymentExternalSystemAdapterImpl(
             semaphore.tryAcquire(remainingTime, TimeUnit.MILLISECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            logger.warn("[$accountName] Interrupted while waiting for semaphore for payment $paymentId")
+//            logger.warn("[$accountName] Interrupted while waiting for semaphore for payment $paymentId")
             resultFuture.complete(PaymentResult(false, 429, "Semaphore interrupted"))
             return resultFuture
         }
 
         if (!acquired) {
-            logger.warn("[$accountName] Could not acquire semaphore within deadline for payment $paymentId")
+//            logger.warn("[$accountName] Could not acquire semaphore within deadline for payment $paymentId")
             logProcessingFailure(paymentId, transactionId, "Semaphore acquisition timeout")
             resultFuture.complete(PaymentResult(false, 429, "Semaphore acquisition timeout"))
             return resultFuture
@@ -99,24 +99,24 @@ class PaymentExternalSystemAdapterImpl(
 
         val deadlineTimeout = maxOf(0, deadline - System.currentTimeMillis())
         if (deadlineTimeout <= 0) {
-            logger.warn("[$accountName] Deadline exceeded after semaphore acquisition for $paymentId")
+//            logger.warn("[$accountName] Deadline exceeded after semaphore acquisition for $paymentId")
             logProcessingFailure(paymentId, transactionId, "Deadline exceeded after semaphore acquisition")
             resultFuture.complete(PaymentResult(false, 408, "Deadline exceeded"))
             return resultFuture
         }
 
         if (!paymentLimiter.tickBlocking(Duration.ofMillis(deadlineTimeout))) {
-            logger.warn("[$accountName] Rate limiter timeout before payment for $paymentId")
+//            logger.warn("[$accountName] Rate limiter timeout before payment for $paymentId")
             logProcessingFailure(paymentId, transactionId, "Rate limiter timeout")
             resultFuture.complete(PaymentResult(false, 429, "Rate limiter timeout"))
             return resultFuture
         }
 
-        logger.info("[$accountName] Submitting payment request for payment $paymentId")
+//        logger.info("[$accountName] Submitting payment request for payment $paymentId")
 
-        asyncUpdate(paymentId) { state ->
-            state.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-        }
+//        asyncUpdate(paymentId) { state ->
+//            state.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+//        }
 
         val url =
             "http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
@@ -140,10 +140,10 @@ class PaymentExternalSystemAdapterImpl(
 
                         else -> 500 to (throwable.message ?: "Unknown error")
                     }
-                    logger.error(
-                        "[$accountName] Payment failed for txId: $transactionId, payment: $paymentId",
-                        throwable
-                    )
+//                    logger.error(
+//                        "[$accountName] Payment failed for txId: $transactionId, payment: $paymentId",
+//                        throwable
+//                    )
                     logProcessingFailure(paymentId, transactionId, reason)
                     resultFuture.complete(PaymentResult(false, status, reason))
                     return@whenComplete
@@ -153,30 +153,30 @@ class PaymentExternalSystemAdapterImpl(
                 val body = try {
                     mapper.readValue(rawBody, ExternalSysResponse::class.java)
                 } catch (e: Exception) {
-                    logger.error(
-                        "[$accountName] Unable to parse response for txId: $transactionId, payment: $paymentId, rawBody: $rawBody",
-                        e
-                    )
+//                    logger.error(
+//                        "[$accountName] Unable to parse response for txId: $transactionId, payment: $paymentId, rawBody: $rawBody",
+//                        e
+//                    )
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
-                logger.info(
-                    "[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}"
-                )
+//                logger.info(
+//                    "[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}"
+//                )
 
                 if (retryCodes.contains(response.statusCode())) {
                     val retryAfter = System.currentTimeMillis() + 100
-                    logger.warn("[$accountName] External system returned 429 for txId: $transactionId, payment: $paymentId")
-                    asyncUpdate(paymentId) { state ->
-                        state.logProcessing(false, now(), transactionId, reason = body.message)
-                    }
+//                    logger.warn("[$accountName] External system returned 429 for txId: $transactionId, payment: $paymentId")
+//                    asyncUpdate(paymentId) { state ->
+//                        state.logProcessing(false, now(), transactionId, reason = body.message)
+//                    }
                     resultFuture.completeExceptionally(TooManyRequestsException(retryAfter))
                     return@whenComplete
                 }
 
-                asyncUpdate(paymentId) { state ->
-                    state.logProcessing(body.result, now(), transactionId, reason = body.message)
-                }
+//                asyncUpdate(paymentId) { state ->
+//                    state.logProcessing(body.result, now(), transactionId, reason = body.message)
+//                }
                 resultFuture.complete(PaymentResult(body.result, response.statusCode(), body.message))
             }
 
@@ -194,9 +194,9 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     private fun logProcessingFailure(paymentId: UUID, transactionId: UUID, reason: String?) {
-        asyncUpdate(paymentId) { state ->
-            state.logProcessing(false, now(), transactionId, reason = reason)
-        }
+//        asyncUpdate(paymentId) { state ->
+//            state.logProcessing(false, now(), transactionId, reason = reason)
+//        }
     }
 
     override fun price() = properties.price
