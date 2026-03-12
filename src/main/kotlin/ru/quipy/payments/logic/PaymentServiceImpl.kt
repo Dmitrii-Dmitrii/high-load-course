@@ -26,7 +26,7 @@ class PaymentSystemImpl(
     private val baseRetryDelayMillis: Long = DEFAULT_RETRY_DELAY_MILLIS,
 ) : PaymentService {
     companion object {
-        private const val DEFAULT_RETRY_DELAY_MILLIS = 6_600L
+        private const val DEFAULT_RETRY_DELAY_MILLIS = 10L
         val logger = LoggerFactory.getLogger(PaymentSystemImpl::class.java)
     }
 

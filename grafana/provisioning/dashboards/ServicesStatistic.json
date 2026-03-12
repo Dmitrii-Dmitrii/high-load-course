@@ -24,7 +24,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": 2,
   "links": [],
   "liveNow": true,
   "panels": [
@@ -87,7 +86,35 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "{__name__=\"request_latency\", instance=\"host.docker.internal:8081\", job=\"online-store-job\", quantile=\"0.9\", status_code=\"200\"}",
+                  "{__name__=\"request_latency\", instance=\"host.docker.internal:8081\", job=\"online-store-job\", quantile=\"0.99\", status_code=\"200\"}",
+                  "{__name__=\"request_latency\", instance=\"host.docker.internal:8081\", job=\"online-store-job\", quantile=\"0.8\", status_code=\"200\"}",
+                  "{__name__=\"request_latency\", instance=\"host.docker.internal:8081\", job=\"online-store-job\", quantile=\"0.5\", status_code=\"200\"}"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 27,
@@ -109,7 +136,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "editorMode": "code",
@@ -217,7 +244,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -226,7 +253,6 @@
           },
           "editorMode": "code",
           "expr": "sum(rate(payment_finished_total{service=~\"$service\"}[30s])) by (service, outcome, failReason)",
-          "hide": false,
           "instant": false,
           "legendFormat": "{{outcome}} - {{failReason}}",
           "range": true,
@@ -317,7 +343,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -418,7 +444,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -427,7 +453,6 @@
           },
           "editorMode": "code",
           "expr": "sum(increase(payments_amount_total{service=~\"$service\"}[1m])) by (service) / (sum(increase(payments_amount_total{service=~\"$service\"}[1m])) by (service) + sum(increase(external_amount_total{service=~\"$service\"}[1m])) by (service))",
-          "hide": false,
           "instant": false,
           "legendFormat": "income - {{service}}",
           "range": true,
@@ -440,7 +465,6 @@
           },
           "editorMode": "code",
           "expr": "sum(increase(external_amount_total{service=~\"$service\"}[1m])) by (service) / (sum(increase(payments_amount_total{service=~\"$service\"}[1m])) by (service) + sum(increase(external_amount_total{service=~\"$service\"}[1m])) by (service))",
-          "hide": false,
           "instant": false,
           "legendFormat": "expenses - {{service}} ",
           "range": true,
@@ -502,7 +526,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -511,7 +535,6 @@
           },
           "editorMode": "code",
           "expr": "sum(increase(payments_amount_total{service=~\"$service\"}[$__range])) by (service) / (sum(increase(payments_amount_total{service=~\"$service\"}[$__range])) by (service) + sum(increase(external_amount_total{service=~\"$service\"}[$__range])) by (service))",
-          "hide": false,
           "instant": false,
           "legendFormat": "income - {{service}}",
           "range": true,
@@ -524,7 +547,6 @@
           },
           "editorMode": "code",
           "expr": "sum(increase(external_amount_total{service=~\"$service\"}[$__range])) by (service) / (sum(increase(payments_amount_total{service=~\"$service\"}[$__range])) by (service) + sum(increase(external_amount_total{service=~\"$service\"}[$__range])) by (service))",
-          "hide": false,
           "instant": false,
           "legendFormat": "expenses - {{service}} ",
           "range": true,
@@ -618,7 +640,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -627,7 +649,6 @@
           },
           "editorMode": "code",
           "expr": "sum(increase(payments_amount_total{service=~\"$service\"}[1m])) by (service)",
-          "hide": false,
           "instant": false,
           "legendFormat": "income - {{service}}",
           "range": true,
@@ -640,7 +661,6 @@
           },
           "editorMode": "code",
           "expr": "sum(increase(external_amount_total{service=~\"$service\"}[1m])) by (service, accountName) ",
-          "hide": false,
           "instant": false,
           "legendFormat": "expenses - {{service}} - {{accountName}}",
           "range": true,
@@ -702,7 +722,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -711,7 +731,6 @@
           },
           "editorMode": "code",
           "expr": "sum(increase(payments_amount_total{service=~\"$service\"}[$__range])) by (service)",
-          "hide": false,
           "instant": false,
           "legendFormat": "income - {{service}}",
           "range": true,
@@ -724,7 +743,6 @@
           },
           "editorMode": "code",
           "expr": "sum(increase(external_amount_total{service=~\"$service\"}[$__range])) by (service, accountName) ",
-          "hide": false,
           "instant": false,
           "legendFormat": "expenses - {{service}} - {{accountName}}",
           "range": true,
@@ -825,7 +843,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -963,7 +981,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -1064,7 +1082,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -1164,7 +1182,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "editorMode": "code",
@@ -1180,7 +1198,6 @@
           },
           "editorMode": "code",
           "expr": "rate(http_request_success_pay_total[30s])",
-          "hide": false,
           "instant": false,
           "legendFormat": "success_pay_req",
           "range": true,
@@ -1193,7 +1210,6 @@
           },
           "editorMode": "code",
           "expr": "rate(http_request_fail_pay_total[30s])",
-          "hide": false,
           "instant": false,
           "legendFormat": "fail_pay_req",
           "range": true,
@@ -1284,7 +1300,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "editorMode": "code",
@@ -1294,7 +1310,7 @@
           "refId": "A"
         }
       ],
-      "title": "New panel",
+      "title": "Queue",
       "type": "timeseries"
     },
     {
@@ -1378,7 +1394,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "editorMode": "code",
@@ -1388,7 +1404,101 @@
           "refId": "A"
         }
       ],
-      "title": "New panel",
+      "title": "Retry counter",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 77
+      },
+      "id": 105,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "payment_hedge_requests_total",
+          "legendFormat": "hedge requests",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Hedge requests",
       "type": "timeseries"
     },
     {
@@ -1397,7 +1507,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 85
       },
       "id": 12,
       "panels": [],
@@ -1503,7 +1613,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 86
       },
       "id": 7,
       "options": {
@@ -1521,7 +1631,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -1640,7 +1750,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 86
       },
       "id": 8,
       "options": {
@@ -1658,7 +1768,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -1682,7 +1792,6 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1740,7 +1849,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 86
+        "y": 94
       },
       "id": 30,
       "options": {
@@ -1758,7 +1867,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -1780,7 +1889,6 @@
           },
           "exemplar": true,
           "expr": "",
-          "hide": false,
           "interval": "",
           "legendFormat": "",
           "refId": "B"
@@ -1795,7 +1903,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 102
       },
       "id": 17,
       "panels": [],
@@ -1902,7 +2010,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 95
+        "y": 103
       },
       "id": 3,
       "options": {
@@ -1920,7 +2028,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -1930,7 +2038,6 @@
           "editorMode": "code",
           "exemplar": true,
           "expr": "sum(rate(http_external_duration_count{service=~\"$service\"}[30s])) by (method)",
-          "hide": false,
           "interval": "",
           "legendFormat": "{{method}}",
           "range": true,
@@ -2040,7 +2147,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 95
+        "y": 103
       },
       "id": 14,
       "options": {
@@ -2060,7 +2167,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -2070,7 +2177,6 @@
           "editorMode": "code",
           "exemplar": true,
           "expr": "rate(http_external_duration_sum{service=~\"$service\"}[1m]) / rate(http_external_duration_count{service=~\"$service\"}[1m])",
-          "hide": false,
           "interval": "",
           "legendFormat": "{{method}} - {{result}}",
           "range": true,
@@ -2180,7 +2286,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 103
+        "y": 111
       },
       "id": 32,
       "options": {
@@ -2200,7 +2306,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -2210,7 +2316,6 @@
           "editorMode": "code",
           "exemplar": true,
           "expr": "rate(external_sys_duration_count{service=~\"$service\"}[30s])",
-          "hide": false,
           "interval": "",
           "legendFormat": "{{accountName}} - {{outcome}}",
           "range": true,
@@ -2320,7 +2425,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 103
+        "y": 111
       },
       "id": 34,
       "options": {
@@ -2340,7 +2445,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -2350,7 +2455,6 @@
           "editorMode": "code",
           "exemplar": true,
           "expr": "rate(external_sys_duration_sum{service=~\"$service\"}[1m]) / rate(external_sys_duration_count{service=~\"$service\"}[1m])",
-          "hide": false,
           "interval": "",
           "legendFormat": "{{accountName}} - {{outcome}}",
           "range": true,
@@ -2484,7 +2588,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 111
+        "y": 119
       },
       "id": 43,
       "options": {
@@ -2504,7 +2608,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -2513,7 +2617,6 @@
           },
           "editorMode": "code",
           "expr": "rate(http_request_latent_sum{service=~\"$service\"}[15s]) / rate(http_request_latent_count{service=~\"$service\"}[15s])",
-          "hide": false,
           "instant": false,
           "legendFormat": "{{method}} - {{result}}",
           "range": true,
@@ -2529,7 +2632,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 119
+        "y": 127
       },
       "id": 21,
       "panels": [],
@@ -2601,7 +2704,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 120
+        "y": 128
       },
       "id": 19,
       "options": {
@@ -2617,7 +2720,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -2701,7 +2804,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 120
+        "y": 128
       },
       "id": 22,
       "options": {
@@ -2717,7 +2820,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "datasource": {
@@ -2801,7 +2904,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 128
+        "y": 136
       },
       "id": 100,
       "options": {
@@ -2842,7 +2945,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 136
+        "y": 144
       },
       "id": 38,
       "panels": [],
@@ -2911,7 +3014,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 137
+        "y": 145
       },
       "id": 40,
       "options": {
@@ -3007,7 +3110,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 137
+        "y": 145
       },
       "id": 39,
       "options": {
@@ -3108,7 +3211,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 145
+        "y": 153
       },
       "id": 95,
       "options": {
@@ -3220,7 +3323,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 145
+        "y": 153
       },
       "id": 42,
       "options": {
@@ -3316,7 +3419,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 153
+        "y": 161
       },
       "id": 41,
       "options": {
@@ -3356,7 +3459,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 161
+        "y": 169
       },
       "id": 97,
       "panels": [
@@ -3931,6 +4034,7 @@
         },
         "refresh": 1,
         "regex": "",
+        "regexApplyTo": "value",
         "type": "query"
       }
     ]
@@ -3946,8 +4050,9 @@
       "30s"
     ]
   },
-  "timezone": "",
+  "timezone": "browser",
   "title": "Services statistic",
   "uid": "KVr-Vmpnz",
-  "version": 5
+  "version": 7,
+  "weekStart": ""
 }

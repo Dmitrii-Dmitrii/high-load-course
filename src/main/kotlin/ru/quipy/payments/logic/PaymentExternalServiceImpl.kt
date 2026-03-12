@@ -2,6 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
@@ -25,6 +27,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentProviderHostPort: String,
     private val token: String,
     private val hedgeDelayMs: Long,
+    meterRegistry: MeterRegistry,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -46,6 +49,11 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
     private val retryCodes: List<Int> = listOf(429, 500, 502, 503, 504)
+
+    private val hedgeCounter = Counter.builder("payment_hedge_requests_total")
+        .description("Number of hedge requests sent")
+        .tag("account", accountName)
+        .register(meterRegistry)
 
 
     private val executor = Executors.newCachedThreadPool()
@@ -181,10 +189,18 @@ class PaymentExternalSystemAdapterImpl(
         httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete(responseHandler)
 
         CompletableFuture.runAsync({
-            if (!resultFuture.isDone) {
-                logger.info("[$accountName] Sending hedge request for payment $paymentId, txId: $transactionId")
-                httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete(responseHandler)
-            }
+            val remaining = deadline - System.currentTimeMillis()
+            if (resultFuture.isDone || remaining <= 0) return@runAsync
+
+            val hedgeRequest = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .timeout(Duration.ofMillis(minOf(requestTimeout, remaining)))
+                .build()
+
+            hedgeCounter.increment()
+            logger.info("[$accountName] Sending hedge request for payment $paymentId, txId: $transactionId")
+            httpClient.sendAsync(hedgeRequest, HttpResponse.BodyHandlers.ofString()).whenComplete(responseHandler)
         }, CompletableFuture.delayedExecutor(hedgeDelayMs, TimeUnit.MILLISECONDS, executor))
 
         return resultFuture
