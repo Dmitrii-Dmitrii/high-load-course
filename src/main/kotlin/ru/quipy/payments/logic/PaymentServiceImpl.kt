@@ -42,6 +42,7 @@ class PaymentSystemImpl(
             .help("Request latency.")
             .quantile(0.5, 0.01)
             .quantile(0.8, 0.005)
+            .quantile(0.9, 0.005)
             .quantile(0.99, 0.005)
             .labelNames("status_code")
             .register(prometheusRegistry)

@@ -35,6 +35,9 @@ class PaymentAccountsConfig {
     @Value("#{'\${payment.accounts}'.split(',')}")
     lateinit var allowedAccounts: List<String>
 
+    @Value("\${payment.hedge-delay-ms}")
+    var hedgeDelayMs: Long = 0
+
     @Bean
     fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
@@ -57,7 +60,8 @@ class PaymentAccountsConfig {
                     it,
                     paymentService,
                     paymentProviderHostPort,
-                    token
+                    token,
+                    hedgeDelayMs
                 )
             }
     }

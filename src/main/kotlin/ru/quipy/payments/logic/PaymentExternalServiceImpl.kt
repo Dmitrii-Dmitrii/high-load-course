@@ -24,6 +24,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    private val hedgeDelayMs: Long,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -127,58 +128,64 @@ class PaymentExternalSystemAdapterImpl(
             .timeout(Duration.ofMillis(minOf(requestTimeout, deadlineTimeout)))
             .build()
 
-        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-            .whenComplete { response, throwable ->
-                if (resultFuture.isDone) {
-                    return@whenComplete
+        val responseHandler = java.util.function.BiConsumer<HttpResponse<String>?, Throwable?> { response, throwable ->
+            if (resultFuture.isDone) return@BiConsumer
+
+            if (throwable != null) {
+                val (status, reason) = when {
+                    throwable is java.net.http.HttpTimeoutException ||
+                            throwable.cause is java.net.http.HttpTimeoutException -> 408 to "Request timeout."
+
+                    else -> 500 to (throwable.message ?: "Unknown error")
                 }
-
-                if (throwable != null) {
-                    val (status, reason) = when {
-                        throwable is java.net.http.HttpTimeoutException ||
-                                throwable.cause is java.net.http.HttpTimeoutException -> 408 to "Request timeout."
-
-                        else -> 500 to (throwable.message ?: "Unknown error")
-                    }
-                    logger.error(
-                        "[$accountName] Payment failed for txId: $transactionId, payment: $paymentId",
-                        throwable
-                    )
-                    logProcessingFailure(paymentId, transactionId, reason)
-                    resultFuture.complete(PaymentResult(false, status, reason))
-                    return@whenComplete
-                }
-
-                val rawBody = response.body()
-                val body = try {
-                    mapper.readValue(rawBody, ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error(
-                        "[$accountName] Unable to parse response for txId: $transactionId, payment: $paymentId, rawBody: $rawBody",
-                        e
-                    )
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
-                }
-
-                logger.info(
-                    "[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}"
+                logger.error(
+                    "[$accountName] Payment failed for txId: $transactionId, payment: $paymentId",
+                    throwable
                 )
-
-                if (retryCodes.contains(response.statusCode())) {
-                    val retryAfter = System.currentTimeMillis() + 100
-                    logger.warn("[$accountName] External system returned 429 for txId: $transactionId, payment: $paymentId")
-                    asyncUpdate(paymentId) { state ->
-                        state.logProcessing(false, now(), transactionId, reason = body.message)
-                    }
-                    resultFuture.completeExceptionally(TooManyRequestsException(retryAfter))
-                    return@whenComplete
-                }
-
-                asyncUpdate(paymentId) { state ->
-                    state.logProcessing(body.result, now(), transactionId, reason = body.message)
-                }
-                resultFuture.complete(PaymentResult(body.result, response.statusCode(), body.message))
+                logProcessingFailure(paymentId, transactionId, reason)
+                resultFuture.complete(PaymentResult(false, status, reason))
+                return@BiConsumer
             }
+
+            val rawBody = response!!.body()
+            val body = try {
+                mapper.readValue(rawBody, ExternalSysResponse::class.java)
+            } catch (e: Exception) {
+                logger.error(
+                    "[$accountName] Unable to parse response for txId: $transactionId, payment: $paymentId, rawBody: $rawBody",
+                    e
+                )
+                ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+            }
+
+            logger.info(
+                "[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}"
+            )
+
+            if (retryCodes.contains(response.statusCode())) {
+                val retryAfter = System.currentTimeMillis() + 100
+                logger.warn("[$accountName] External system returned 429 for txId: $transactionId, payment: $paymentId")
+                asyncUpdate(paymentId) { state ->
+                    state.logProcessing(false, now(), transactionId, reason = body.message)
+                }
+                resultFuture.completeExceptionally(TooManyRequestsException(retryAfter))
+                return@BiConsumer
+            }
+
+            asyncUpdate(paymentId) { state ->
+                state.logProcessing(body.result, now(), transactionId, reason = body.message)
+            }
+            resultFuture.complete(PaymentResult(body.result, response.statusCode(), body.message))
+        }
+
+        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete(responseHandler)
+
+        CompletableFuture.runAsync({
+            if (!resultFuture.isDone) {
+                logger.info("[$accountName] Sending hedge request for payment $paymentId, txId: $transactionId")
+                httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete(responseHandler)
+            }
+        }, CompletableFuture.delayedExecutor(hedgeDelayMs, TimeUnit.MILLISECONDS, executor))
 
         return resultFuture
     }
