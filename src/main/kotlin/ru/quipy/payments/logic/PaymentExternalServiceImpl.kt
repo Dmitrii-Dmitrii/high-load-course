@@ -199,7 +199,7 @@ class PaymentExternalSystemAdapterImpl(
         httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
             .whenComplete { response, throwable -> handleResponse(response, throwable, isPrimary = true) }
 
-        val maxHedges = 5
+        val maxHedges = 3
         for (n in 1..maxHedges) {
             CompletableFuture.runAsync({
                 val remaining = deadline - System.currentTimeMillis()
