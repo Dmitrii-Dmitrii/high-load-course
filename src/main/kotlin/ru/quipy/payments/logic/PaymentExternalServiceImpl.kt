@@ -18,7 +18,7 @@ import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 
 // Advice: always treat time as a Duration
@@ -135,7 +135,7 @@ class PaymentExternalSystemAdapterImpl(
             .timeout(Duration.ofMillis(minOf(requestTimeout, deadlineTimeout)))
             .build()
 
-        val hedgeSent = AtomicBoolean(false)
+        val pendingHedges = AtomicInteger(0)
 
         fun handleResponse(response: HttpResponse<String>?, throwable: Throwable?, isPrimary: Boolean) {
             if (resultFuture.isDone) return
@@ -144,9 +144,18 @@ class PaymentExternalSystemAdapterImpl(
                 val isTimeout = throwable is java.net.http.HttpTimeoutException ||
                         throwable.cause is java.net.http.HttpTimeoutException
 
-                if (isPrimary && isTimeout && hedgeSent.get()) {
-                    logger.warn("[$accountName] Primary timed out, hedge in flight for payment $paymentId — awaiting hedge result")
-                    return
+                if (isTimeout) {
+                    if (isPrimary && pendingHedges.get() > 0) {
+                        logger.warn("[$accountName] Primary timed out, ${pendingHedges.get()} hedge(s) in flight for payment $paymentId")
+                        return
+                    }
+                    if (!isPrimary) {
+                        val remaining = pendingHedges.decrementAndGet()
+                        if (remaining > 0) {
+                            logger.warn("[$accountName] Hedge timed out, $remaining hedge(s) still in flight for payment $paymentId")
+                            return
+                        }
+                    }
                 }
 
                 val (status, reason) = if (isTimeout) 408 to "Request timeout." else 500 to (throwable.message ?: "Unknown error")
@@ -190,22 +199,25 @@ class PaymentExternalSystemAdapterImpl(
         httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
             .whenComplete { response, throwable -> handleResponse(response, throwable, isPrimary = true) }
 
-        CompletableFuture.runAsync({
-            val remaining = deadline - System.currentTimeMillis()
-            if (resultFuture.isDone || remaining <= 0) return@runAsync
+        val maxHedges = 4
+        for (n in 1..maxHedges) {
+            CompletableFuture.runAsync({
+                val remaining = deadline - System.currentTimeMillis()
+                if (resultFuture.isDone || remaining <= 0) return@runAsync
 
-            val hedgeRequest = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .POST(HttpRequest.BodyPublishers.noBody())
-                .timeout(Duration.ofMillis(minOf(requestTimeout, remaining)))
-                .build()
+                val hedgeRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .timeout(Duration.ofMillis(minOf(requestTimeout, remaining)))
+                    .build()
 
-            hedgeSent.set(true)
-            hedgeCounter.increment()
-            logger.info("[$accountName] Sending hedge request for payment $paymentId, txId: $transactionId")
-            httpClient.sendAsync(hedgeRequest, HttpResponse.BodyHandlers.ofString())
-                .whenComplete { response, throwable -> handleResponse(response, throwable, isPrimary = false) }
-        }, CompletableFuture.delayedExecutor(hedgeDelayMs, TimeUnit.MILLISECONDS, executor))
+                pendingHedges.incrementAndGet()
+                hedgeCounter.increment()
+                logger.info("[$accountName] Sending hedge #$n for payment $paymentId, txId: $transactionId")
+                httpClient.sendAsync(hedgeRequest, HttpResponse.BodyHandlers.ofString())
+                    .whenComplete { response, throwable -> handleResponse(response, throwable, isPrimary = false) }
+            }, CompletableFuture.delayedExecutor(hedgeDelayMs * n, TimeUnit.MILLISECONDS, executor))
+        }
 
         return resultFuture
     }
