@@ -67,3 +67,12 @@ data class PaymentResult(
 )
 
 class TooManyRequestsException(val retryAfter: Long) : RuntimeException()
+
+data class CircuitBreakerProperties(
+    val slidingWindowSize: Int = 30,
+    val failureRateThreshold: Float = 50f,
+    val slowCallRateThreshold: Float = 80f,
+    val waitDurationInOpenStateMs: Long = 5000,
+    val permittedCallsInHalfOpen: Int = 3,
+    val minimumNumberOfCalls: Int = 5,
+)

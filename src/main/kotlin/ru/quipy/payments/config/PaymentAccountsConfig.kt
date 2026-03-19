@@ -39,6 +39,24 @@ class PaymentAccountsConfig {
     @Value("\${payment.hedge-delay-ms}")
     var hedgeDelayMs: Long = 0
 
+    @Value("\${payment.circuit-breaker.sliding-window-size:30}")
+    var cbSlidingWindowSize: Int = 30
+
+    @Value("\${payment.circuit-breaker.failure-rate-threshold:50}")
+    var cbFailureRateThreshold: Float = 50f
+
+    @Value("\${payment.circuit-breaker.slow-call-rate-threshold:80}")
+    var cbSlowCallRateThreshold: Float = 80f
+
+    @Value("\${payment.circuit-breaker.wait-duration-in-open-state-ms:5000}")
+    var cbWaitDurationInOpenStateMs: Long = 5000
+
+    @Value("\${payment.circuit-breaker.permitted-calls-in-half-open:3}")
+    var cbPermittedCallsInHalfOpen: Int = 3
+
+    @Value("\${payment.circuit-breaker.minimum-number-of-calls:5}")
+    var cbMinimumNumberOfCalls: Int = 5
+
     @Bean
     fun accountAdapters(
         paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
@@ -50,6 +68,15 @@ class PaymentAccountsConfig {
             .build()
 
         val resp = javaClient.send(request, HttpResponse.BodyHandlers.ofString())
+
+        val cbProperties = CircuitBreakerProperties(
+            slidingWindowSize = cbSlidingWindowSize,
+            failureRateThreshold = cbFailureRateThreshold,
+            slowCallRateThreshold = cbSlowCallRateThreshold,
+            waitDurationInOpenStateMs = cbWaitDurationInOpenStateMs,
+            permittedCallsInHalfOpen = cbPermittedCallsInHalfOpen,
+            minimumNumberOfCalls = cbMinimumNumberOfCalls,
+        )
 
         println("\nPayment accounts list:")
         return mapper.readValue<List<PaymentAccountProperties>>(
@@ -66,6 +93,7 @@ class PaymentAccountsConfig {
                     paymentProviderHostPort,
                     token,
                     hedgeDelayMs,
+                    cbProperties,
                     meterRegistry
                 )
             }

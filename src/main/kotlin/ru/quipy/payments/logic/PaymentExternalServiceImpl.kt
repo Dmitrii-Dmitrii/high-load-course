@@ -2,7 +2,11 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.github.resilience4j.circuitbreaker.CircuitBreaker
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowType
 import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.SlidingWindowRateLimiter
@@ -28,6 +32,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentProviderHostPort: String,
     private val token: String,
     private val hedgeDelayMs: Long,
+    private val cbProperties: CircuitBreakerProperties,
     meterRegistry: MeterRegistry,
 ) : PaymentExternalSystemAdapter {
 
@@ -70,6 +75,26 @@ class PaymentExternalSystemAdapterImpl(
 
     private val semaphore = Semaphore(parallelRequests)
 
+    private val circuitBreaker: CircuitBreaker = CircuitBreaker.of(
+        "payment-cb-$accountName",
+        CircuitBreakerConfig.custom()
+            .slidingWindowType(SlidingWindowType.TIME_BASED)
+            .slidingWindowSize(cbProperties.slidingWindowSize)
+            .failureRateThreshold(cbProperties.failureRateThreshold)
+            .slowCallRateThreshold(cbProperties.slowCallRateThreshold)
+            .slowCallDurationThreshold(Duration.ofMillis(2 * requestAverageProcessingTime.toMillis()))
+            .waitDurationInOpenState(Duration.ofMillis(cbProperties.waitDurationInOpenStateMs))
+            .permittedNumberOfCallsInHalfOpenState(cbProperties.permittedCallsInHalfOpen)
+            .minimumNumberOfCalls(cbProperties.minimumNumberOfCalls)
+            .ignoreExceptions(TooManyRequestsException::class.java)
+            .build()
+    ).also { cb ->
+        cb.eventPublisher
+            .onStateTransition { event ->
+                logger.warn("[$accountName] Circuit breaker state transition: ${event.stateTransition}")
+            }
+    }
+
     override fun performPaymentAsync(
         paymentId: UUID,
         amount: Int,
@@ -86,6 +111,15 @@ class PaymentExternalSystemAdapterImpl(
             resultFuture.complete(PaymentResult(false, 408, "Deadline exceeded before submission"))
             return resultFuture
         }
+
+        if (!circuitBreaker.tryAcquirePermission()) {
+            logger.warn("[$accountName] Circuit breaker is open, rejecting payment $paymentId")
+            logProcessingFailure(paymentId, transactionId, "Circuit breaker is open")
+            resultFuture.complete(PaymentResult(false, 503, "Circuit breaker is open for $accountName"))
+            return resultFuture
+        }
+
+        val cbCallStart = System.currentTimeMillis()
 
         val acquired = try {
             semaphore.tryAcquire(remainingTime, TimeUnit.MILLISECONDS)
@@ -140,6 +174,8 @@ class PaymentExternalSystemAdapterImpl(
         fun handleResponse(response: HttpResponse<String>?, throwable: Throwable?, isPrimary: Boolean) {
             if (resultFuture.isDone) return
 
+            val cbDuration = System.currentTimeMillis() - cbCallStart
+
             if (throwable != null) {
                 val isTimeout = throwable is java.net.http.HttpTimeoutException ||
                         throwable.cause is java.net.http.HttpTimeoutException
@@ -161,6 +197,7 @@ class PaymentExternalSystemAdapterImpl(
                 val (status, reason) = if (isTimeout) 408 to "Request timeout." else 500 to (throwable.message ?: "Unknown error")
                 logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", throwable)
                 logProcessingFailure(paymentId, transactionId, reason)
+                circuitBreaker.onError(cbDuration, TimeUnit.MILLISECONDS, throwable)
                 resultFuture.complete(PaymentResult(false, status, reason))
                 return
             }
@@ -186,8 +223,15 @@ class PaymentExternalSystemAdapterImpl(
                 asyncUpdate(paymentId) { state ->
                     state.logProcessing(false, now(), transactionId, reason = body.message)
                 }
+                circuitBreaker.onError(cbDuration, TimeUnit.MILLISECONDS, RuntimeException("HTTP ${response.statusCode()}"))
                 resultFuture.completeExceptionally(TooManyRequestsException(retryAfter))
                 return
+            }
+
+            if (body.result) {
+                circuitBreaker.onSuccess(cbDuration, TimeUnit.MILLISECONDS)
+            } else {
+                circuitBreaker.onError(cbDuration, TimeUnit.MILLISECONDS, RuntimeException(body.message ?: "Payment failed"))
             }
 
             asyncUpdate(paymentId) { state ->
